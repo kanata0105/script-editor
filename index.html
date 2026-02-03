@@ -1,1 +1,653 @@
-<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="X-UA-Compatible" content="chrome=1"><meta name="viewport" content="width=1104,initial-scale=0.3,maximum-scale=1"><title>Creative Cloud Desktop</title><link rel="preload font" href="./fonts/AdobeClean-LightIt.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-It.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-Bold.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-Light.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-Regular.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-ExtraBold.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-SemiCnIt.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-BoldSemiCnIt.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-SemiCn.otf" as="font"><link rel="preload font" href="./fonts/AdobeClean-BoldSemiCn.otf" as="font"><link href="clean.css" rel="stylesheet"></head><body><div id="root"></div><script src="../resources/legacy/host/libs/json2xml.min.js"></script><script defer="defer" src="index.js"></script></body></html>
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>台本エディタ</title>
+  <style>
+    /* ========== 共通リセット・基本設定 ========== */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --font-main: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif JP", serif;
+      --font-mono: "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", "Noto Sans JP", sans-serif;
+      --color-bg: #f5f5f5;
+      --color-panel: #ffffff;
+      --color-border: #ddd;
+      --color-text: #333;
+      --color-speaker: #1a1a1a;
+      --color-direction: #888;
+      --line-height: 1.8;
+      /* A4サイズ */
+      --page-width: 210mm;
+      --page-height: 297mm;
+      --page-margin: 20mm;
+      /* 本文エリア = A4 - 余白×2 */
+      --content-width: 170mm;
+      --content-height: 257mm;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font-mono);
+      background: var(--color-bg);
+      color: var(--color-text);
+    }
+
+    /* ========== 画面レイアウト ========== */
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 20px;
+      background: var(--color-panel);
+      border-bottom: 1px solid var(--color-border);
+      flex-shrink: 0;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .char-count, .page-count {
+      font-size: 13px;
+      color: #666;
+    }
+
+    .btn-print {
+      padding: 8px 16px;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-print:hover {
+      background: #1d4ed8;
+    }
+
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ========== 左側：横書き入力エリア ========== */
+    .editor-panel {
+      width: 400px;
+      min-width: 300px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--color-border);
+      background: var(--color-panel);
+      flex-shrink: 0;
+    }
+
+    .panel-header {
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #666;
+      border-bottom: 1px solid var(--color-border);
+      background: #fafafa;
+      flex-shrink: 0;
+    }
+
+    .editor-textarea {
+      flex: 1;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      line-height: 1.7;
+      background: var(--color-panel);
+    }
+
+    .editor-textarea::placeholder {
+      color: #aaa;
+    }
+
+    /* ========== 右側：縦書きプレビュー ========== */
+    .preview-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #6b7280;
+      overflow: hidden;
+    }
+
+    .preview-scroll {
+      flex: 1;
+      overflow: auto;
+      padding: 30px;
+    }
+
+    .pages-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 30px;
+    }
+
+    /* A4ページ */
+    .page {
+      width: var(--page-width);
+      height: var(--page-height);
+      background: #fff;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      padding: var(--page-margin);
+      overflow: hidden;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .page-content {
+      width: var(--content-width);
+      height: var(--content-height);
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      font-family: var(--font-main);
+      font-size: 14px;
+      line-height: var(--line-height);
+      overflow: hidden;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .page-number {
+      position: absolute;
+      bottom: 8mm;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      color: #999;
+      font-family: var(--font-mono);
+    }
+
+    /* 台本スタイル：話者 */
+    .line-speaker {
+      font-weight: bold;
+      color: var(--color-speaker);
+    }
+
+    /* 台本スタイル：SE/BGM等の演出指示 */
+    .line-direction {
+      color: var(--color-direction);
+      font-size: 0.9em;
+    }
+
+    /* 台本スタイル：本文 */
+    .line-body {
+      /* デフォルトスタイル */
+    }
+
+    /* ========== 印刷用CSS ========== */
+    @media print {
+      /* UI要素を非表示 */
+      .header,
+      .editor-panel,
+      .panel-header {
+        display: none !important;
+      }
+
+      /* 全体レイアウトをリセット */
+      html, body {
+        height: auto;
+        background: #fff;
+        margin: 0;
+        padding: 0;
+      }
+
+      .app-container {
+        display: block;
+        height: auto;
+      }
+
+      .main-content {
+        display: block;
+      }
+
+      .preview-panel {
+        display: block;
+        width: auto;
+        background: #fff;
+        overflow: visible;
+      }
+
+      .preview-scroll {
+        overflow: visible;
+        padding: 0;
+      }
+
+      .pages-container {
+        display: block;
+        gap: 0;
+      }
+
+      /* A4ページ印刷設定 */
+      .page {
+        width: var(--page-width);
+        height: var(--page-height);
+        padding: var(--page-margin);
+        margin: 0;
+        box-shadow: none;
+        page-break-after: always;
+        page-break-inside: avoid;
+        overflow: hidden;
+        background: #fff;
+      }
+
+      .page:last-child {
+        page-break-after: auto;
+      }
+
+      .page-content {
+        width: var(--content-width);
+        height: var(--content-height);
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        font-family: var(--font-main);
+        font-size: 12pt;
+        line-height: 1.9;
+        overflow: hidden;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+
+      .page-number {
+        display: block;
+      }
+
+      /* A4設定 */
+      @page {
+        size: A4 portrait;
+        margin: 0;
+      }
+
+      /* 演出指示も印刷時は薄めに */
+      .line-direction {
+        color: #666;
+      }
+    }
+
+    /* ========== 測定用（非表示） ========== */
+    #measureContainer {
+      position: fixed;
+      left: -99999px;
+      top: 0;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    #measurePage {
+      width: var(--page-width);
+      height: var(--page-height);
+      padding: var(--page-margin);
+      box-sizing: border-box;
+      background: #fff;
+    }
+
+    #measureContent {
+      width: var(--content-width);
+      height: var(--content-height);
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+      font-family: var(--font-main);
+      font-size: 14px;
+      line-height: 1.8;
+      overflow: visible;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    #measureContent .line-speaker {
+      font-weight: bold;
+    }
+
+    #measureContent .line-direction {
+      font-size: 0.9em;
+    }
+
+    /* ========== レスポンシブ対応 ========== */
+    @media screen and (max-width: 900px) {
+      .editor-panel {
+        width: 280px;
+        min-width: 200px;
+      }
+    }
+
+    @media screen and (max-width: 600px) {
+      .main-content {
+        flex-direction: column;
+      }
+
+      .editor-panel {
+        width: 100%;
+        min-width: 100%;
+        height: 35vh;
+        border-right: none;
+        border-bottom: 1px solid var(--color-border);
+      }
+
+      .preview-panel {
+        flex: 1;
+      }
+
+      .page {
+        width: 100%;
+        height: auto;
+        min-height: 400px;
+      }
+
+      .page-content {
+        width: 100%;
+        height: auto;
+        min-height: 350px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <header class="header">
+      <h1>台本エディタ</h1>
+      <div class="header-actions">
+        <span class="char-count">文字数: <span id="charCount">0</span></span>
+        <span class="page-count">ページ: <span id="pageCount">1</span></span>
+        <button class="btn-print" onclick="handlePrint()">PDF保存 / 印刷</button>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <section class="editor-panel">
+        <div class="panel-header">横書き入力</div>
+        <textarea 
+          id="editor" 
+          class="editor-textarea" 
+          placeholder="ここに台本を入力してください...
+
+【話者名】セリフや台詞を入力
+（SE: 効果音の指示）
+（BGM: 音楽の指示）
+
+改行で段落を分けられます。"
+        ></textarea>
+      </section>
+
+      <section class="preview-panel">
+        <div class="panel-header">縦書きプレビュー（A4）</div>
+        <div class="preview-scroll">
+          <div id="pagesContainer" class="pages-container">
+            <div class="page">
+              <div class="page-content"></div>
+              <div class="page-number">1</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 測定用の非表示要素 -->
+  <div id="measureContainer">
+    <div id="measurePage">
+      <div id="measureContent"></div>
+    </div>
+  </div>
+
+  <script>
+    // ========== DOM要素 ==========
+    const editor = document.getElementById('editor');
+    const pagesContainer = document.getElementById('pagesContainer');
+    const charCountEl = document.getElementById('charCount');
+    const pageCountEl = document.getElementById('pageCount');
+    const measureContent = document.getElementById('measureContent');
+
+    // ========== デバウンス関数 ==========
+    function debounce(fn, delay) {
+      let timeoutId;
+      return function(...args) {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn.apply(this, args), delay);
+      };
+    }
+
+    // ========== 行の種類を判定 ==========
+    function getLineType(line) {
+      const trimmed = line.trim();
+      
+      if (trimmed === '') {
+        return 'empty';
+      }
+      
+      if (/^【.+?】/.test(trimmed)) {
+        return 'speaker';
+      }
+      
+      if (/^（(SE|BGM|se|bgm|Se|Bgm)[：:]/.test(trimmed) || 
+          /^\((SE|BGM|se|bgm|Se|Bgm)[：:]/.test(trimmed)) {
+        return 'direction';
+      }
+      
+      return 'body';
+    }
+
+    // ========== HTMLエスケープ ==========
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ========== 行をスタイル付きテキストに変換 ==========
+    function lineToStyledText(line) {
+      const type = getLineType(line);
+      const escapedLine = escapeHtml(line);
+
+      switch (type) {
+        case 'empty':
+          return '\n';
+        case 'speaker':
+          return `<span class="line-speaker">${escapedLine}</span>\n`;
+        case 'direction':
+          return `<span class="line-direction">${escapedLine}</span>\n`;
+        default:
+          return `<span class="line-body">${escapedLine}</span>\n`;
+      }
+    }
+
+    // ========== テキスト全体をHTMLに変換 ==========
+    function textToHtml(text) {
+      if (!text) return '';
+      const lines = text.split('\n');
+      return lines.map(line => lineToStyledText(line)).join('');
+    }
+
+    // ========== ページ分割処理（修正版） ==========
+    function paginateContent(text) {
+      if (!text.trim()) {
+        return [''];
+      }
+
+      const lines = text.split('\n');
+      const pages = [];
+      
+      // 測定用コンテナの実際のサイズを取得
+      const containerRect = measureContent.getBoundingClientRect();
+      // 縦書きの場合、widthがコンテンツの「横方向の広がり」の制限
+      // 丸め誤差を考慮して少し余裕を持たせる（+5px）
+      const maxWidth = Math.ceil(containerRect.width) + 5;
+
+      let left = 0;
+      
+      while (left < lines.length) {
+        // 二分探索で最大行数を見つける
+        let lo = 1;
+        let hi = lines.length - left;
+        let bestFit = 1;
+        
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2);
+          const testLines = lines.slice(left, left + mid);
+          const testHtml = testLines.map(line => lineToStyledText(line)).join('');
+          
+          measureContent.innerHTML = testHtml;
+          const contentWidth = measureContent.scrollWidth;
+          
+          if (contentWidth <= maxWidth) {
+            bestFit = mid;
+            lo = mid + 1;
+          } else {
+            hi = mid - 1;
+          }
+        }
+        
+        // ページを追加
+        const pageLines = lines.slice(left, left + bestFit);
+        const pageHtml = pageLines.map(line => lineToStyledText(line)).join('');
+        pages.push(pageHtml);
+        
+        left += bestFit;
+        
+        // 無限ループ防止
+        if (pages.length > 1000) break;
+      }
+      
+      // 空の場合は1ページ作成
+      if (pages.length === 0) {
+        pages.push('');
+      }
+      
+      // 測定用コンテナをクリア
+      measureContent.innerHTML = '';
+      
+      return pages;
+    }
+
+    // ========== ページを描画 ==========
+    function renderPages(pages) {
+      pagesContainer.innerHTML = '';
+      
+      pages.forEach((pageContent, index) => {
+        const pageDiv = document.createElement('div');
+        pageDiv.className = 'page';
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'page-content';
+        contentDiv.innerHTML = pageContent;
+        
+        const pageNumDiv = document.createElement('div');
+        pageNumDiv.className = 'page-number';
+        pageNumDiv.textContent = index + 1;
+        
+        pageDiv.appendChild(contentDiv);
+        pageDiv.appendChild(pageNumDiv);
+        pagesContainer.appendChild(pageDiv);
+      });
+      
+      pageCountEl.textContent = pages.length;
+    }
+
+    // ========== プレビュー更新 ==========
+    function updatePreview() {
+      const text = editor.value;
+      const pages = paginateContent(text);
+      renderPages(pages);
+    }
+
+    // ========== 文字数カウント更新 ==========
+    function updateCharCount() {
+      const text = editor.value;
+      const count = text.replace(/\n/g, '').length;
+      charCountEl.textContent = count.toLocaleString();
+    }
+
+    // ========== デバウンス付き更新関数 ==========
+    const debouncedUpdate = debounce(() => {
+      updatePreview();
+      updateCharCount();
+    }, 300);
+
+    // ========== イベントリスナー ==========
+    editor.addEventListener('input', debouncedUpdate);
+
+    // ========== 印刷/PDF保存 ==========
+    function handlePrint() {
+      window.print();
+    }
+
+    // ========== ローカルストレージ保存 ==========
+    const STORAGE_KEY = 'script-editor-content';
+
+    function saveToStorage() {
+      try {
+        localStorage.setItem(STORAGE_KEY, editor.value);
+      } catch (e) {
+        // ストレージ容量超過時は無視
+      }
+    }
+
+    function loadFromStorage() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+          editor.value = saved;
+        }
+      } catch (e) {
+        // エラー時は無視
+      }
+    }
+
+    const debouncedSave = debounce(saveToStorage, 1000);
+    editor.addEventListener('input', debouncedSave);
+
+    // ========== 初期化 ==========
+    function initialize() {
+      loadFromStorage();
+      // フォントの読み込みを待ってから初期化
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+          updatePreview();
+          updateCharCount();
+        });
+      } else {
+        setTimeout(() => {
+          updatePreview();
+          updateCharCount();
+        }, 200);
+      }
+    }
+
+    // DOMが完全に読み込まれてから初期化
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+      initialize();
+    }
+  </script>
+</body>
+</html>
