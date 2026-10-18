@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>五目並べ</title>
+  <style>
+    /* ========== 共通リセット・基本設定 ========== */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --font-main: "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", "Noto Sans JP", sans-serif;
+      --color-bg: #f5f5f5;
+      --color-panel: #ffffff;
+      --color-border: #ddd;
+      --color-text: #333;
+      --color-sub: #888;
+      --color-accent: #c0392b;
+      --color-board: #dcb35c;
+      --color-line: #5a4320;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --color-bg: #1e1e1e;
+        --color-panel: #2a2a2a;
+        --color-border: #444;
+        --color-text: #e6e6e6;
+        --color-sub: #aaa;
+        --color-accent: #ff6b5b;
+        --color-board: #c9a050;
+      }
+    }
+
+    html, body {
+      min-height: 100%;
+      font-family: var(--font-main);
+      background: var(--color-bg);
+      color: var(--color-text);
+    }
+
+    /* ========== 画面レイアウト ========== */
+    .app-container {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .header h1 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      padding: 12px;
+      background: var(--color-panel);
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+
+    .controls label {
+      font-size: 14px;
+    }
+
+    select, button {
+      font-family: inherit;
+      font-size: 14px;
+      padding: 6px 12px;
+      border: 1px solid var(--color-border);
+      border-radius: 4px;
+      background: var(--color-panel);
+      color: var(--color-text);
+      cursor: pointer;
+    }
+
+    button:hover {
+      filter: brightness(0.95);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 32px;
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .status.win {
+      color: var(--color-accent);
+    }
+
+    .stone-icon {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1px solid #000;
+    }
+
+    .stone-icon.black { background: #111; }
+    .stone-icon.white { background: #fafafa; }
+
+    /* ========== 盤面 ========== */
+    .board-wrap {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: var(--color-board);
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+
+    .footer {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--color-sub);
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <div class="header">
+      <h1>五目並べ</h1>
+    </div>
+
+    <div class="controls">
+      <label for="mode">対戦:</label>
+      <select id="mode">
+        <option value="cpu-black">CPUと対戦（あなたが先手・黒）</option>
+        <option value="cpu-white">CPUと対戦（あなたが後手・白）</option>
+        <option value="pvp">2人で対戦</option>
+      </select>
+      <button id="newGame">新しいゲーム</button>
+      <button id="undo">待った</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="board-wrap">
+      <canvas id="board"></canvas>
+    </div>
+
+    <div class="footer">縦・横・斜めのいずれかに同じ色の石を5つ以上並べたら勝ち</div>
+  </div>
+
+  <script>
+    // ========== 定数・状態 ==========
+    const SIZE = 15;
+    const EMPTY = 0, BLACK = 1, WHITE = 2;
+    const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+    const STAR_POINTS = [[3, 3], [3, 11], [11, 3], [11, 11], [7, 7]];
+
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const modeEl = document.getElementById('mode');
+    const undoBtn = document.getElementById('undo');
+
+    let board, history, turn, winner, winLine, cpuColor, cpuTimer;
+
+    function newGame() {
+      clearTimeout(cpuTimer);
+      board = Array.from({ length: SIZE }, () => Array(SIZE).fill(EMPTY));
+      history = [];
+      turn = BLACK;
+      winner = null;
+      winLine = null;
+      const mode = modeEl.value;
+      cpuColor = mode === 'cpu-black' ? WHITE : mode === 'cpu-white' ? BLACK : null;
+      render();
+      scheduleCpu();
+    }
+
+    // ========== 勝敗判定 ==========
+    function inBoard(x, y) {
+      return x >= 0 && x < SIZE && y >= 0 && y < SIZE;
+    }
+
+    function findWinLine(x, y, color) {
+      for (const [dx, dy] of DIRS) {
+        const line = [[x, y]];
+        for (const sign of [1, -1]) {
+          let nx = x + dx * sign, ny = y + dy * sign;
+          while (inBoard(nx, ny) && board[ny][nx] === color) {
+            line.push([nx, ny]);
+            nx += dx * sign;
+            ny += dy * sign;
+          }
+        }
+        if (line.length >= 5) return line;
+      }
+      return null;
+    }
+
+    function placeStone(x, y) {
+      if (winner || !inBoard(x, y) || board[y][x] !== EMPTY) return false;
+      board[y][x] = turn;
+      history.push([x, y]);
+      const line = findWinLine(x, y, turn);
+      if (line) {
+        winner = turn;
+        winLine = line;
+      } else if (history.length === SIZE * SIZE) {
+        winner = 'draw';
+      } else {
+        turn = turn === BLACK ? WHITE : BLACK;
+      }
+      render();
+      scheduleCpu();
+      return true;
+    }
+
+    function undo() {
+      clearTimeout(cpuTimer);
+      // CPU戦では自分の手番に戻るまで取り消す
+      const steps = cpuColor ? (turn === cpuColor && !winner ? 1 : 2) : 1;
+      for (let i = 0; i < steps && history.length > 0; i++) {
+        const [x, y] = history.pop();
+        board[y][x] = EMPTY;
+      }
+      turn = history.length % 2 === 0 ? BLACK : WHITE;
+      winner = null;
+      winLine = null;
+      render();
+      scheduleCpu();
+    }
+
+    // ========== CPU思考 ==========
+    // ある方向に石を置いたときの連の長さと両端の空き具合から評価する
+    function lineScore(count, open) {
+      if (count >= 5) return 100000;
+      if (open === 0) return 0;
+      if (count === 4) return open === 2 ? 10000 : 1200;
+      if (count === 3) return open === 2 ? 1000 : 120;
+      if (count === 2) return open === 2 ? 100 : 10;
+      return open === 2 ? 10 : 1;
+    }
+
+    function evaluatePoint(x, y, color) {
+      let total = 0;
+      for (const [dx, dy] of DIRS) {
+        let count = 1, open = 0;
+        for (const sign of [1, -1]) {
+          let nx = x + dx * sign, ny = y + dy * sign;
+          while (inBoard(nx, ny) && board[ny][nx] === color) {
+            count++;
+            nx += dx * sign;
+            ny += dy * sign;
+          }
+          if (inBoard(nx, ny) && board[ny][nx] === EMPTY) open++;
+        }
+        total += lineScore(count, open);
+      }
+      return total;
+    }
+
+    function hasNeighbor(x, y) {
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (inBoard(nx, ny) && board[ny][nx] !== EMPTY) return true;
+        }
+      }
+      return false;
+    }
+
+    function cpuMove() {
+      if (history.length === 0) return [7, 7];
+      const opponent = cpuColor === BLACK ? WHITE : BLACK;
+      let best = -1, candidates = [];
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x] !== EMPTY || !hasNeighbor(x, y)) continue;
+          const attack = evaluatePoint(x, y, cpuColor);
+          const defense = evaluatePoint(x, y, opponent);
+          // 自分の勝ちを優先しつつ、相手の強い形は確実に止める
+          const score = attack * 1.1 + defense;
+          if (score > best) {
+            best = score;
+            candidates = [[x, y]];
+          } else if (score === best) {
+            candidates.push([x, y]);
+          }
+        }
+      }
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    }
+
+    function scheduleCpu() {
+      if (!cpuColor || winner || turn !== cpuColor) return;
+      cpuTimer = setTimeout(() => {
+        const [x, y] = cpuMove();
+        placeStone(x, y);
+      }, 300);
+    }
+
+    // ========== 描画 ==========
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      render();
+    }
+
+    function geometry() {
+      const w = canvas.getBoundingClientRect().width;
+      const cell = w / (SIZE + 1);
+      return { w, cell, offset: cell };
+    }
+
+    function render() {
+      const { w, cell, offset } = geometry();
+      ctx.clearRect(0, 0, w, w);
+
+      // 罫線
+      ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-line');
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < SIZE; i++) {
+        const p = offset + i * cell;
+        ctx.moveTo(offset, p);
+        ctx.lineTo(offset + (SIZE - 1) * cell, p);
+        ctx.moveTo(p, offset);
+        ctx.lineTo(p, offset + (SIZE - 1) * cell);
+      }
+      ctx.stroke();
+
+      // 星
+      ctx.fillStyle = ctx.strokeStyle;
+      for (const [x, y] of STAR_POINTS) {
+        ctx.beginPath();
+        ctx.arc(offset + x * cell, offset + y * cell, cell * 0.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 石
+      const r = cell * 0.45;
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (board[y][x] === EMPTY) continue;
+          const cx = offset + x * cell, cy = offset + y * cell;
+          const grad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, r * 0.1, cx, cy, r);
+          if (board[y][x] === BLACK) {
+            grad.addColorStop(0, '#666');
+            grad.addColorStop(1, '#111');
+          } else {
+            grad.addColorStop(0, '#fff');
+            grad.addColorStop(1, '#ccc');
+          }
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.fillStyle = grad;
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.4)';
+          ctx.stroke();
+        }
+      }
+
+      // 最後の一手
+      if (history.length > 0) {
+        const [lx, ly] = history[history.length - 1];
+        ctx.beginPath();
+        ctx.arc(offset + lx * cell, offset + ly * cell, r * 0.25, 0, Math.PI * 2);
+        ctx.fillStyle = '#e74c3c';
+        ctx.fill();
+      }
+
+      // 勝ちライン
+      if (winLine) {
+        const sorted = winLine.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const [sx, sy] = sorted[0], [ex, ey] = sorted[sorted.length - 1];
+        ctx.beginPath();
+        ctx.moveTo(offset + sx * cell, offset + sy * cell);
+        ctx.lineTo(offset + ex * cell, offset + ey * cell);
+        ctx.strokeStyle = 'rgba(231, 76, 60, 0.85)';
+        ctx.lineWidth = Math.max(3, cell * 0.15);
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
+
+      renderStatus();
+    }
+
+    function colorName(color) {
+      return color === BLACK ? '黒' : '白';
+    }
+
+    function playerLabel(color) {
+      if (!cpuColor) return colorName(color);
+      return color === cpuColor ? `CPU（${colorName(color)}）` : `あなた（${colorName(color)}）`;
+    }
+
+    function renderStatus() {
+      statusEl.classList.toggle('win', !!winner);
+      if (winner === 'draw') {
+        statusEl.textContent = '引き分け';
+      } else if (winner) {
+        statusEl.innerHTML = `<span class="stone-icon ${winner === BLACK ? 'black' : 'white'}"></span>${playerLabel(winner)}の勝ち！`;
+      } else {
+        const thinking = cpuColor && turn === cpuColor ? ' 考え中…' : 'の番';
+        statusEl.innerHTML = `<span class="stone-icon ${turn === BLACK ? 'black' : 'white'}"></span>${playerLabel(turn)}${thinking}`;
+      }
+      undoBtn.disabled = history.length === 0 || (cpuColor === BLACK && history.length === 1);
+    }
+
+    // ========== 入力 ==========
+    canvas.addEventListener('click', (e) => {
+      if (winner || (cpuColor && turn === cpuColor)) return;
+      const rect = canvas.getBoundingClientRect();
+      const { cell, offset } = geometry();
+      const x = Math.round((e.clientX - rect.left - offset) / cell);
+      const y = Math.round((e.clientY - rect.top - offset) / cell);
+      placeStone(x, y);
+    });
+
+    document.getElementById('newGame').addEventListener('click', newGame);
+    modeEl.addEventListener('change', newGame);
+    undoBtn.addEventListener('click', undo);
+    window.addEventListener('resize', resizeCanvas);
+
+    newGame();
+    resizeCanvas();
+  </script>
+</body>
+</html>
